@@ -1,10 +1,12 @@
 # Tetraploid Dosage Inference Assumptions
 
-This document describes the assumptions under which the current genotype-calling script is statistically valid **as written**.
+This document explains the assumptions under which the current genotype-calling script is statistically valid **as written**.
 
 ## Purpose
 
-The script infers the most likely dosage state at a **biallelic tetraploid locus** using observed reference (`REF`) and alternate (`ALT`) read counts. It classifies each locus into one of five possible dosage classes:
+The script infers the most likely dosage state at a **biallelic tetraploid locus** using observed reference (`REF`) and alternate (`ALT`) read counts.
+
+Each locus is classified into one of five possible dosage classes:
 
 - `AAAA`
 - `AAAB`
@@ -12,27 +14,27 @@ The script infers the most likely dosage state at a **biallelic tetraploid locus
 - `ABBB`
 - `BBBB`
 
-The script is intended as a **simplified likelihood-based dosage classifier**, not as a full empirical model of sequencing bias, allele-specific distortion, or overdispersion.
+This script should be described as a **simplified likelihood-based dosage classifier**, not as a full empirical model of sequencing bias, allele-specific distortion, or overdispersion.
 
-## Core Assumptions
+---
+
+## Core assumptions
 
 ### 1. Biallelic tetraploid locus
+
 Each locus is assumed to be:
 
 - **biallelic**, with alleles `A` and `B`
 - **tetraploid**, with exactly four allele copies
 
-Therefore, the true genotype must belong to exactly one of the following five dosage classes:
-- `AAAA`
-- `AAAB`
-- `AABB`
-- `ABBB`
-- `BBBB`
+Therefore, the true genotype must belong to exactly one of these five dosage classes:
 
+`AAAA`, `AAAB`, `AABB`, `ABBB`, `BBBB`
 
 ---
 
 ### 2. Observed data are allele counts
+
 For each sample at each locus, the observed data are:
 
 - `a`: number of reads supporting the reference allele
@@ -44,21 +46,23 @@ If `n = 0`, no genotype inference is made.
 ---
 
 ### 3. Expected reference allele fractions are determined by dosage
-The expected reference-read fractions for the five dosage classes are assumed to be:
+
+The expected reference-read fractions for the five dosage classes are:
 
 | Dosage | Genotype | Expected REF fraction |
 |---|---|---:|
-| 0 | AAAA | 1.00 |
-| 1 | AAAB | 0.75 |
-| 2 | AABB | 0.50 |
-| 3 | ABBB | 0.25 |
-| 4 | BBBB | 0.00 |
+| 0 | `AAAA` | 1.00 |
+| 1 | `AAAB` | 0.75 |
+| 2 | `AABB` | 0.50 |
+| 3 | `ABBB` | 0.25 |
+| 4 | `BBBB` | 0.00 |
 
 These values define the characteristic read-count pattern associated with each hidden dosage state.
 
 ---
 
 ### 4. Conditional independence of reads
+
 Given the true dosage class, reads are assumed to arise independently with a common probability of supporting the reference allele.
 
 Under this assumption, the reference read count `a` is modeled conditionally on total depth `n`.
@@ -66,34 +70,27 @@ Under this assumption, the reference read count `a` is modeled conditionally on 
 ---
 
 ### 5. Likelihood model for homozygous classes
+
 For homozygous dosage classes, the script assumes a binomial model with a small fixed error term:
 
-\[
-e = 0.001
-\]
+`e = 0.001`
 
 Thus:
 
-\[
-a \mid \text{AAAA} \sim \text{Binomial}(n, 1 - e)
-\]
+- `a | AAAA ~ Binomial(n, 1 - e)`
+- `a | BBBB ~ Binomial(n, e)`
 
-\[
-a \mid \text{BBBB} \sim \text{Binomial}(n, e)
-\]
-
-This allows a very small probability of observing the non-expected allele due to sequencing or calling error.
+This allows a very small probability of observing the non-expected allele because of sequencing or calling error.
 
 ---
 
 ### 6. Likelihood model for heterozygous classes
+
 For heterozygous dosage classes (`AAAB`, `AABB`, `ABBB`), the script assumes a **symmetric two-component mixture** around the expected reference fraction `f`.
 
 For each heterozygous class:
 
-\[
-P(a \mid d) = \tfrac{1}{2}\,\text{Binomial}(n, f + e) + \tfrac{1}{2}\,\text{Binomial}(n, f - e)
-\]
+`P(a | d) = 0.5 * Binomial(n, f + e) + 0.5 * Binomial(n, f - e)`
 
 where:
 
@@ -106,34 +103,31 @@ This matches the implementation exactly and should be interpreted as a simplifie
 ---
 
 ### 7. Equal prior probability of dosage classes
+
 Before observing read counts, all five dosage classes are assumed to be equally likely:
 
-\[
-P(\text{AAAA}) = P(\text{AAAB}) = P(\text{AABB}) = P(\text{ABBB}) = P(\text{BBBB})
-\]
+- `P(AAAA) = P(AAAB) = P(AABB) = P(ABBB) = P(BBBB)`
 
 This assumption is important because the script converts class-specific likelihoods into probabilities by normalizing them across the five dosage states.
 
 ---
 
 ### 8. Posterior inference by normalized likelihoods
+
 For each dosage class `d`, the script computes a class-specific likelihood:
 
-\[
-L_d = P(a \mid d)
-\]
+`L_d = P(a | d)`
 
 Under the equal-prior assumption, the posterior probability of dosage class `d` is obtained by:
 
-\[
-P(d \mid a, n) = \frac{L_d}{\sum_j L_j}
-\]
+`P(d | a, n) = L_d / sum_j(L_j)`
 
 Thus, the normalized values returned by the script can be interpreted as posterior probabilities under the model assumptions listed above.
 
 ---
 
 ### 9. Normal approximation at very high depth
+
 For read depths up to the defined threshold (`n <= 1000`), the script uses the exact binomial probability.
 
 For very high read depth (`n > 1000`), the script replaces the exact binomial calculation with a normal approximation having matching mean and variance.
@@ -146,6 +140,7 @@ Therefore:
 ---
 
 ### 10. Independent locus-wise inference
+
 Each locus is inferred independently.
 
 The script does **not**:
@@ -178,7 +173,7 @@ It does **not** necessarily mean that the probability is perfectly calibrated to
 
 The script reports a genotype label only when the highest posterior probability is at least 95%.
 
-So the rule is:
+Decision rule:
 
 - if `max posterior >= 0.95`, report the best genotype
 - otherwise, report `Low confidence`
@@ -222,4 +217,3 @@ A precise way to describe the method is:
 A cautious limitation statement is:
 
 > The method is intended as a simplified model-based classifier rather than a full empirical model of allele-specific bias, overdispersion, or locus-specific sequencing error.
-

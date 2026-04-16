@@ -23,10 +23,12 @@ Each locus is assumed to be:
 - **tetraploid**, with exactly four allele copies
 
 Therefore, the true genotype must belong to exactly one of the following five dosage classes:
+- `AAAA`
+- `AAAB`
+- `AABB`
+- `ABBB`
+- `BBBB`
 
-\[
-\text{AAAA},\ \text{AAAB},\ \text{AABB},\ \text{ABBB},\ \text{BBBB}
-\]
 
 ---
 

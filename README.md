@@ -1,219 +1,273 @@
-# Tetraploid Dosage Inference Assumptions
+# Tetraploid Genotype Inference from REF/ALT Read Counts
 
-This document explains the assumptions under which the current genotype-calling script is statistically valid **as written**.
+This script infers tetraploid genotype dosage from REF/ALT read counts using a modified naïve binomial likelihood model. It is designed for autotetraploid organisms such as potato, where each biallelic SNP can have five possible dosage classes.
 
-## Purpose
+| ALT dosage | Genotype | Expected REF fraction |
+|---:|---|---:|
+| 0 | AAAA | 1.00 |
+| 1 | AAAB | 0.75 |
+| 2 | AABB | 0.50 |
+| 3 | ABBB | 0.25 |
+| 4 | BBBB | 0.00 |
 
-The script infers the most likely dosage state at a **biallelic tetraploid locus** using observed reference (`REF`) and alternate (`ALT`) read counts.
-
-Each locus is classified into one of five possible dosage classes:
-
-- `AAAA`
-- `AAAB`
-- `AABB`
-- `ABBB`
-- `BBBB`
-
-This script should be described as a **simplified likelihood-based dosage classifier**, not as a full empirical model of sequencing bias, allele-specific distortion, or overdispersion.
+The approach is adapted from the naïve binomial dosage-probability framework described by Yamamoto et al. (2020), with a small error term used to avoid boundary probabilities and to provide limited flexibility around expected allele-balance ratios.
 
 ---
 
-## Core assumptions
+## Main features
 
-### 1. Biallelic tetraploid locus
-
-Each locus is assumed to be:
-
-- **biallelic**, with alleles `A` and `B`
-- **tetraploid**, with exactly four allele copies
-
-Therefore, the true genotype must belong to exactly one of these five dosage classes:
-
-`AAAA`, `AAAB`, `AABB`, `ABBB`, `BBBB`
+- Infers tetraploid dosage classes from REF/ALT read counts.
+- Uses a small error term, default `error = 0.001`.
+- Calculates likelihoods on the log scale to avoid numerical underflow.
+- Does **not** use normal approximation for high-depth sites.
+- Reports genotype calls only when the maximum normalized likelihood exceeds a user-defined confidence threshold.
+- Marks uncertain calls as `Low confidence`.
+- Marks missing or malformed count values as `No reads`.
 
 ---
 
-### 2. Observed data are allele counts
+## Model description
 
-For each sample at each locus, the observed data are:
+For each SNP and individual, the script calculates genotype likelihoods for the five tetraploid dosage classes.
 
-- `a`: number of reads supporting the reference allele
-- `b`: number of reads supporting the alternate allele
-- `n = a + b`: total read depth
+For homozygous classes, the expected REF probabilities are error-adjusted:
 
-If `n = 0`, no genotype inference is made.
+```text
+AAAA: p_REF = 1 - error
+BBBB: p_REF = error
+```
 
----
+For heterozygous classes, the script uses a symmetric two-component mixture around the expected REF fraction:
 
-### 3. Expected reference allele fractions are determined by dosage
+```text
+AAAB: p_REF = 0.75 ± error
+AABB: p_REF = 0.50 ± error
+ABBB: p_REF = 0.25 ± error
+```
 
-The expected reference-read fractions for the five dosage classes are:
+For example, when `error = 0.001`, the AAAB class is evaluated as:
 
-| Dosage | Genotype | Expected REF fraction |
-|---|---|---:|
-| 0 | `AAAA` | 1.00 |
-| 1 | `AAAB` | 0.75 |
-| 2 | `AABB` | 0.50 |
-| 3 | `ABBB` | 0.25 |
-| 4 | `BBBB` | 0.00 |
+```text
+0.5 × Binomial(p = 0.751) + 0.5 × Binomial(p = 0.749)
+```
 
-These values define the characteristic read-count pattern associated with each hidden dosage state.
+All likelihoods are calculated using log-binomial probabilities:
 
----
-
-### 4. Conditional independence of reads
-
-Given the true dosage class, reads are assumed to arise independently with a common probability of supporting the reference allele.
-
-Under this assumption, the reference read count `a` is modeled conditionally on total depth `n`.
-
----
-
-### 5. Likelihood model for homozygous classes
-
-For homozygous dosage classes, the script assumes a binomial model with a small fixed error term:
-
-`e = 0.001`
-
-Thus:
-
-- `a | AAAA ~ Binomial(n, 1 - e)`
-- `a | BBBB ~ Binomial(n, e)`
-
-This allows a very small probability of observing the non-expected allele because of sequencing or calling error.
-
----
-
-### 6. Likelihood model for heterozygous classes
-
-For heterozygous dosage classes (`AAAB`, `AABB`, `ABBB`), the script assumes a **symmetric two-component mixture** around the expected reference fraction `f`.
-
-For each heterozygous class:
-
-`P(a | d) = 0.5 * Binomial(n, f + e) + 0.5 * Binomial(n, f - e)`
+```text
+log P(k | n, p)
+```
 
 where:
 
-- `f = 0.75` for `AAAB`
-- `f = 0.50` for `AABB`
-- `f = 0.25` for `ABBB`
+```text
+k = number of REF reads
+n = total read depth = REF + ALT
+p = expected REF fraction for a dosage class
+```
 
-This matches the implementation exactly and should be interpreted as a simplified symmetric deviation model around the ideal dosage-specific allele fraction.
+The likelihoods are then normalized across the five dosage classes:
 
----
+```text
+normalized likelihood = likelihood for one dosage / sum of likelihoods for all dosages
+```
 
-### 7. Equal prior probability of dosage classes
-
-Before observing read counts, all five dosage classes are assumed to be equally likely:
-
-- `P(AAAA) = P(AAAB) = P(AABB) = P(ABBB) = P(BBBB)`
-
-This assumption is important because the script converts class-specific likelihoods into probabilities by normalizing them across the five dosage states.
+The genotype with the highest normalized likelihood is selected. If the maximum normalized likelihood is below the confidence threshold, the call is classified as `Low confidence`.
 
 ---
 
-### 8. Posterior inference by normalized likelihoods
+## Why log-binomial likelihood is used
 
-For each dosage class `d`, the script computes a class-specific likelihood:
+An older implementation used a normal approximation to the binomial distribution for high-depth sites. That approximation has been removed.
 
-`L_d = P(a | d)`
-
-Under the equal-prior assumption, the posterior probability of dosage class `d` is obtained by:
-
-`P(d | a, n) = L_d / sum_j(L_j)`
-
-Thus, the normalized values returned by the script can be interpreted as posterior probabilities under the model assumptions listed above.
+The current version uses exact binomial log-likelihoods for all depths. This avoids numerical underflow while preserving accurate likelihood calculations for both low-depth and high-depth sites, including extreme REF/ALT ratios.
 
 ---
 
-### 9. Normal approximation at very high depth
+## Input format
 
-For read depths up to the defined threshold (`n <= 1000`), the script uses the exact binomial probability.
+The input file should be a CSV file.
 
-For very high read depth (`n > 1000`), the script replaces the exact binomial calculation with a normal approximation having matching mean and variance.
+The first two columns are treated as metadata, usually:
 
-Therefore:
+```text
+Chromosome, Position
+```
 
-- for `n <= 1000`, the inference is exact under the stated model
-- for `n > 1000`, the inference is approximate under the stated model
+All columns from the third column onward are treated as sample genotype-count columns.
 
----
+Each sample cell should contain REF and ALT read counts in this format:
 
-### 10. Independent locus-wise inference
+```text
+REF/ALT
+```
 
-Each locus is inferred independently.
+Example:
 
-The script does **not**:
+```csv
+Chromosome,Position,Sample1,Sample2,Sample3
+Chr01,10025,39/0,30/10,0/42
+Chr01,10580,741/39,20/20,3/55
+Chr02,20210,.,15/5,NA
+```
 
-- borrow information across loci
-- borrow information across samples
-- model linkage disequilibrium
-- model population structure
-- estimate locus-specific bias parameters
+Accepted missing values include:
 
----
+```text
+.
+NA
+NaN
+nan
+./.
+empty cell
+```
 
-## Interpretation of output probabilities
+Malformed or missing values are reported as:
 
-Under the assumptions above, the reported probabilities are valid **model-based posterior probabilities**.
-
-For example, a call such as:
-
-- `AABB (97.3%)`
-
-means:
-
-> Under the specified five-state dosage model, equal genotype priors, and the likelihood rules implemented in the script, the posterior probability of `AABB` is 0.973.
-
-It does **not** necessarily mean that the probability is perfectly calibrated to all sources of real sequencing noise or biological bias.
-
----
-
-## Confidence threshold
-
-The script reports a genotype label only when the highest posterior probability is at least 95%.
-
-Decision rule:
-
-- if `max posterior >= 0.95`, report the best genotype
-- otherwise, report `Low confidence`
-
-This threshold is valid as a decision rule under the model assumptions above.
+```text
+No reads
+```
 
 ---
 
-## Practical scope
+## Output format
 
-This script is statistically defensible when used as a **simplified dosage classifier** for:
+The output file is a CSV file containing the first two metadata columns plus inferred genotype calls for each sample.
 
-- biallelic tetraploid loci
-- reference/alternate read count data
-- locus-wise independent genotype inference
-- a fixed small error term
-- equal prior probabilities across the five dosage states
+Example:
 
-It should **not** be described as a fully calibrated empirical sequencing-error model unless additional validation is provided.
+```csv
+Chromosome,Position,Sample1,Sample2,Sample3
+Chr01,10025,AAAA (99.99%),AAAB (98.50%),BBBB (99.99%)
+Chr01,10580,AAAB (96.15%),AABB (99.20%),BBBB (97.80%)
+Chr02,20210,No reads,AAAB (97.60%),Low confidence
+```
+
+Each confident call is reported as:
+
+```text
+Genotype (probability%)
+```
+
+For example:
+
+```text
+AAAB (96.15%)
+```
+
+If the maximum normalized likelihood is below the confidence threshold, the output is:
+
+```text
+Low confidence
+```
+
+If no valid REF/ALT read counts are available, the output is:
+
+```text
+No reads
+```
 
 ---
 
-## Suggested methods text
+## Usage
 
-### Short version
+Basic usage:
 
-Genotype inference was performed for biallelic tetraploid loci by classifying each sample into one of five dosage states: `AAAA`, `AAAB`, `AABB`, `ABBB`, or `BBBB`. For each locus, reference and alternate read counts were modeled conditionally on dosage using binomial likelihoods with a small fixed error term (`e = 0.001`). Heterozygous classes were represented using a symmetric two-component mixture around their expected allele fractions. Equal prior probabilities were assumed across dosage classes, and posterior probabilities were obtained by normalizing class-specific likelihoods. For depths greater than 1000, a normal approximation to the binomial likelihood was used.
+```bash
+python genotype_inference_no_normal.py \
+  -i allele_count_Ref_to_Alt.csv \
+  -o inferred_genotypes.csv
+```
 
-### Full version
+With custom error and confidence threshold:
 
-For each biallelic tetraploid locus, genotype inference was treated as classification among five possible dosage states: `AAAA`, `AAAB`, `AABB`, `ABBB`, and `BBBB`. For each sample at a locus, the observed data consisted of the number of reference-supporting reads (`a`) and alternate-supporting reads (`b`), with total depth defined as `n = a + b`. Expected reference allele fractions were assumed to be `1.0`, `0.75`, `0.5`, `0.25`, and `0.0` for the five dosage states, respectively. Read counts were modeled conditionally on dosage using binomial likelihoods. Homozygous classes were modeled using a small fixed error term (`e = 0.001`), such that `AAAA` and `BBBB` corresponded to reference-read probabilities of `1 - e` and `e`, respectively. Heterozygous classes were modeled using a symmetric two-component mixture around the expected reference fraction, evaluated at `f - e` and `f + e`. Equal prior probabilities were assumed for all five dosage classes, and posterior probabilities were obtained by normalizing class-specific likelihoods across the five states. For depths greater than 1000, a normal approximation to the binomial likelihood was used.
+```bash
+python genotype_inference_no_normal.py \
+  -i allele_count_Ref_to_Alt.csv \
+  -o inferred_genotypes.csv \
+  --error 0.001 \
+  --confidence 0.95
+```
+
+Example on an HPC interactive node:
+
+```bash
+salloc --time=3:00:00 --mem=32G --cpus-per-task=2
+srun --pty bash
+
+conda activate potato_env
+
+cd /home/cflzxc/potato_smart_culling/Python
+
+python genotype_inference_no_normal.py \
+  -i ../allele_count_Ref_to_Alt.csv \
+  -o inferred_genotypes.csv
+```
 
 ---
 
-## Limitation statement
+## Arguments
 
-A precise way to describe the method is:
+| Argument | Required | Default | Description |
+|---|---:|---:|---|
+| `-i`, `--input` | yes | none | Input CSV file containing REF/ALT counts |
+| `-o`, `--output` | yes | none | Output CSV file for inferred genotypes |
+| `--error` | no | `0.001` | Small error term used in genotype likelihoods |
+| `--confidence` | no | `0.95` | Minimum normalized likelihood required to report a genotype |
 
-> This script implements a simplified Bayesian-style likelihood framework for dosage inference in biallelic tetraploids, with equal genotype priors and a fixed small error term.
+---
 
-A cautious limitation statement is:
+## Example interpretation
 
-> The method is intended as a simplified model-based classifier rather than a full empirical model of allele-specific bias, overdispersion, or locus-specific sequencing error.
+For a count such as:
+
+```text
+741/39
+```
+
+The REF fraction is:
+
+```text
+741 / (741 + 39) = 0.95
+```
+
+With `error = 0.001`, the model is strict for homozygous classes. Although 95% REF may visually appear close to AAAA, the model expects AAAA to be near 99.9% REF. Therefore, this count may be classified as AAAB if the AAAB likelihood is higher than the AAAA likelihood.
+
+This reflects a key feature of the simplified binomial model: low-frequency minor reads may be interpreted as evidence for heterozygous dosage rather than sequencing, mapping, or allele-balance noise.
+
+---
+
+## Important notes and limitations
+
+This script is a simplified dosage caller. It does not explicitly model:
+
+- allele bias,
+- overdispersion,
+- SNP-specific sequencing error,
+- mapping artifacts,
+- paralogous alignment,
+- population-level genotype priors.
+
+Tools such as `updog` can model some of these effects and may classify low-minor-allele cases differently.
+
+Therefore, this script is best used as:
+
+- a fast tetraploid dosage caller,
+- a transparent binomial baseline,
+- an independent comparison or validation method,
+- a QC tool for evaluating genotype-calling robustness.
+
+Discordant calls between this script and more complex methods such as `updog` should not automatically be interpreted as errors in either method unless independent validation data are available.
+
+---
+
+## Suggested Materials and Methods wording
+
+A possible description for a manuscript is:
+
+> We adapted the naïve binomial probability approach of Yamamoto et al. (2020) to infer tetraploid genotype dosage from REF/ALT read counts extracted from the VCF. For each SNP and individual, likelihoods were calculated across the five possible dosage classes using dosage-specific expected allele fractions. A small error term (e = 0.001) was included to avoid boundary probabilities and to allow limited deviation from ideal allele balance. The dosage class with the highest normalized likelihood was retained, whereas calls below the confidence threshold were classified as low confidence.
+
+---
+
+## Reference
+
+Yamamoto E, Shirasawa K, Kimura T, Monden Y, Tanaka M, Isobe S. 2020. Genetic mapping in autohexaploid sweet potato with low-coverage NGS-based genotyping data. *G3: Genes, Genomes, Genetics* 10(8):2661–2670. doi:10.1534/g3.120.401433

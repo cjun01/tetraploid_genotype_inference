@@ -19,7 +19,6 @@ The approach is adapted from the naïve binomial dosage-probability framework de
 - Infers tetraploid dosage classes from REF/ALT read counts.
 - Uses a small error term, default `error = 0.001`.
 - Calculates likelihoods on the log scale to avoid numerical underflow.
-- Does **not** use normal approximation for high-depth sites.
 - Reports genotype calls only when the maximum normalized likelihood exceeds a user-defined confidence threshold.
 - Marks uncertain calls as `Low confidence`.
 - Marks missing or malformed count values as `No reads`.
@@ -76,8 +75,6 @@ The genotype with the highest normalized likelihood is selected. If the maximum 
 ---
 
 ## Why log-binomial likelihood is used
-
-An older implementation used a normal approximation to the binomial distribution for high-depth sites. That approximation has been removed.
 
 The current version uses exact binomial log-likelihoods for all depths. This avoids numerical underflow while preserving accurate likelihood calculations for both low-depth and high-depth sites, including extreme REF/ALT ratios.
 

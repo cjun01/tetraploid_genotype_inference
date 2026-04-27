@@ -194,29 +194,6 @@ If the best probability is greater than or equal to the confidence threshold, th
 
 ---
 
-## Why log-likelihoods are used
-
-Direct binomial probabilities can become extremely small when read depth is high. This can lead to numerical underflow, especially for large sequencing datasets or sites with extreme allele ratios.
-
-To avoid this issue, the script calculates genotype likelihoods on the log scale using:
-
-```python
-lgamma(n + 1) - lgamma(k + 1) - lgamma(n - k + 1)
-+ k * log(p) + (n - k) * log(1 - p)
-```
-
-This approach is stable for:
-
-- low-depth sites,
-- high-depth sites,
-- near-homozygous sites,
-- extreme REF/ALT ratios,
-- and large sequencing datasets.
-
-Because of this log-scale implementation, the script does not need to switch to a normal approximation for high-depth sites.
-
----
-
 ## Usage
 
 Run the script from the command line:
@@ -314,47 +291,10 @@ This script assumes:
 6. The sequencing error term is small and symmetric.
 7. The confidence value is a normalized likelihood-based probability rather than a fully Bayesian posterior with external priors.
 
-The script does not explicitly model:
-
-- allele-specific mapping bias,
-- overdispersion,
-- population structure,
-- genotype priors,
-- parental genotype constraints,
-- or site-specific sequencing error.
 
 For more complex genotype calling, especially in low-depth or highly biased datasets, specialized polyploid genotype callers such as `updog` may provide a more detailed probabilistic framework.
 
 However, for high-depth datasets with reliable REF/ALT counts, this simplified method provides a transparent and computationally efficient alternative.
-
----
-
-## Recommended methods description
-
-The following text can be used or adapted for a manuscript methods section:
-
-> Allele dosage was inferred using a modified naïve binomial model based on REF and ALT read counts. For each SNP and sample, the log-likelihood of the observed REF read count was calculated under five autotetraploid dosage classes: AAAA, AAAB, AABB, ABBB, and BBBB. Homozygous classes were modelled using error-adjusted REF probabilities of 1 − e and e, whereas heterozygous classes were modelled using a symmetric two-component mixture around the expected REF fraction. Likelihoods were calculated on the log scale and normalized across genotype classes using the log-sum-exp transformation to obtain posterior-like probabilities. Genotype calls were retained only when the highest normalized probability was greater than or equal to 0.95.
----
-
-## Suggested file naming
-
-Recommended script name:
-
-```text
-infer_tetraploid_dosage.py
-```
-
-Recommended input file name:
-
-```text
-ref_alt_counts.csv
-```
-
-Recommended output file name:
-
-```text
-tetraploid_dosage_calls.csv
-```
 
 ---
 
